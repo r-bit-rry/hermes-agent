@@ -40,6 +40,19 @@ class TestAnthropicDotToHyphen:
     """Anthropic API still needs dots→hyphens."""
 
 
+class TestVertexModelNormalization:
+    """Vertex expects hyphenated minors and @-prefixed snapshot dates."""
+
+    @pytest.mark.parametrize("model,expected", [
+        ("claude-sonnet-4.6", "claude-sonnet-4-6"),
+        ("claude-haiku-4-5-20251001", "claude-haiku-4-5@20251001"),
+        ("anthropic/claude-sonnet-4.6", "claude-sonnet-4-6"),
+    ])
+    def test_vertex_normalizes_models(self, model, expected):
+        result = normalize_model_for_provider(model, "vertex")
+        assert result == expected
+
+
 # ── OpenCode Zen regression ────────────────────────────────────────────
 
 class TestOpenCodeZenModelNormalization:

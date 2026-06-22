@@ -167,6 +167,18 @@ _DEEPSEEK_CANONICAL_MODELS: frozenset[str] = frozenset({
 # of ``deepseek-chat`` and must not be folded into it.
 _DEEPSEEK_V_SERIES_RE = re.compile(r"^deepseek-v\d+([-.].+)?$")
 
+_VERTEX_DATE_SUFFIX_RE = re.compile(r"-(\d{8})$")
+
+
+def _normalize_for_vertex(model_name: str) -> str:
+    """Map Hermes/Anthropic-style Claude IDs to Vertex AnthropicVertex format."""
+    bare = _strip_vendor_prefix(model_name)
+    bare = _dots_to_hyphens(bare)
+    match = _VERTEX_DATE_SUFFIX_RE.search(bare)
+    if match:
+        bare = bare[: match.start()] + "@" + match.group(1)
+    return bare
+
 
 def _normalize_for_deepseek(model_name: str) -> str:
     """Map a model input to a DeepSeek-accepted identifier.
@@ -245,6 +257,8 @@ def _normalize_provider_alias(provider_name: str) -> str:
     raw = (provider_name or "").strip().lower()
     if not raw:
         return raw
+    if raw in {"vertex-ai", "google-vertex"}:
+        return "vertex"
     try:
         from hermes_cli.models import normalize_provider
 
@@ -495,6 +509,10 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
     # --- Aggregators: need vendor/model format ---
     if provider in _AGGREGATOR_PROVIDERS:
         return _prepend_vendor(name)
+
+    # --- Vertex: Anthropic-style dots/hyphens plus @ snapshot dates ---
+    if provider == "vertex":
+        return _normalize_for_vertex(name)
 
     # --- OpenCode Zen / OpenCode Go: flat-namespace resellers.
     #     Their /v1/models API returns bare IDs only (no vendor prefix), and

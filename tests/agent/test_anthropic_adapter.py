@@ -63,6 +63,39 @@ class TestBuildAnthropicClient:
 
 
 
+    def test_vertex_endpoint_uses_anthropic_vertex_client(self, monkeypatch):
+        mock_sdk = MagicMock()
+        mock_sdk.AnthropicVertex = MagicMock(return_value=MagicMock())
+        monkeypatch.setattr("agent.anthropic_adapter._anthropic_sdk", mock_sdk)
+        monkeypatch.setenv("VERTEX_PROJECT_ID", "proj-123")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+        ensured = []
+
+        def fake_lazy_ensure(feature, prompt=False):
+            ensured.append((feature, prompt))
+
+        monkeypatch.setattr("tools.lazy_deps.ensure", fake_lazy_ensure)
+
+        client = build_anthropic_client(
+            "vertex-adc-auth",
+            base_url="https://global-aiplatform.googleapis.com",
+        )
+
+        assert client is mock_sdk.AnthropicVertex.return_value
+        assert ("provider.anthropic_vertex", False) in ensured
+        kwargs = mock_sdk.AnthropicVertex.call_args.kwargs
+        assert kwargs["project_id"] == "proj-123"
+        assert kwargs["region"] == "global"
+
+    def test_azure_anthropic_endpoint_keeps_context_1m_beta(self):
+        with patch("agent.anthropic_adapter._anthropic_sdk") as mock_sdk:
+            build_anthropic_client(
+                "azure-key",
+                base_url="https://example.services.ai.azure.com/models/anthropic",
+            )
+            kwargs = mock_sdk.Anthropic.call_args[1]
+            betas = kwargs["default_headers"]["anthropic-beta"]
+            assert "context-1m-2025-08-07" in betas
 
 
 

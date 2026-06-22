@@ -827,6 +827,104 @@ def test_opencode_go_model_derivation_beats_stale_persisted_api_mode(monkeypatch
 
 
 
+def test_resolve_provider_openrouter_unchanged():
+    """resolve_provider('openrouter') must still return 'openrouter'."""
+    from hermes_cli.auth import resolve_provider
+    assert resolve_provider("openrouter") == "openrouter"
+
+
+def test_resolve_provider_explicit_vertex():
+    from hermes_cli.auth import resolve_provider
+
+    assert resolve_provider("vertex") == "vertex"
+    assert resolve_provider("vertex-ai") == "vertex"
+    assert resolve_provider("google-vertex") == "vertex"
+
+
+def test_resolve_runtime_provider_vertex_real_resolution_chain(monkeypatch):
+    from hermes_cli.auth import resolve_provider
+
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {"provider": "vertex"})
+    monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-vertex-proj")
+    monkeypatch.setenv("VERTEX_REGION", "global")
+
+    assert resolve_provider("vertex") == "vertex"
+
+    resolved = rp.resolve_runtime_provider(requested="vertex")
+
+    assert resolved["provider"] == "vertex"
+    assert resolved["api_mode"] == "anthropic_messages"
+    assert resolved["api_key"] == "vertex-adc-auth"
+    assert resolved["project_id"] == "gcp-vertex-proj"
+    assert resolved["region"] == "global"
+    assert resolved["base_url"] == "https://global-aiplatform.googleapis.com"
+    assert resolved["vertex_anthropic"] is True
+
+
+def test_resolve_provider_lmstudio_returns_lmstudio(monkeypatch):
+    """resolve_provider('lmstudio') must return 'lmstudio', not 'custom'.
+
+    Regression for the alias-map bug where 'lmstudio' was rewritten to
+    'custom' before the PROVIDER_REGISTRY lookup, bypassing the first-class
+    LM Studio provider entirely at runtime.
+    """
+    from hermes_cli.auth import resolve_provider
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert resolve_provider("lmstudio") == "lmstudio"
+    assert resolve_provider("lm-studio") == "lmstudio"
+    assert resolve_provider("lm_studio") == "lmstudio"
+
+
+def test_custom_provider_runtime_preserves_provider_name(monkeypatch):
+    """resolve_runtime_provider with provider='custom' must return provider='custom'."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "model": {
+                "provider": "custom",
+                "base_url": "http://localhost:8080/v1",
+                "api_key": "test-key-123",
+            }
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="custom")
+    assert resolved["provider"] == "custom", (
+        f"Expected provider='custom', got provider='{resolved['provider']}'"
+    )
+    assert resolved["base_url"] == "http://localhost:8080/v1"
+    assert resolved["api_key"] == "test-key-123"
+
+
+def test_custom_provider_no_key_gets_placeholder(monkeypatch):
+    """Local server with no API key should get 'no-key-required' placeholder."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "model": {
+                "provider": "custom",
+                "base_url": "http://localhost:8080/v1",
+            }
+        },
+    )
+
+    resolved = rp.resolve_runtime_provider(requested="custom")
+    assert resolved["provider"] == "custom"
+    assert resolved["api_key"] == "no-key-required"
+    assert resolved["base_url"] == "http://localhost:8080/v1"
 
 
 def test_auto_detected_nous_auth_failure_falls_through_to_openrouter(monkeypatch):

@@ -98,6 +98,11 @@ class TestAllowlist:
         # Same spec tail on both forms.
         assert venv.split(" -m pip install ", 1)[1] == default.split("uv pip install ", 1)[1]
 
+    def test_anthropic_vertex_feature_is_allowlisted(self):
+        assert ld.feature_specs("provider.anthropic_vertex") == (
+            "google-auth[requests]==2.49.2",
+        )
+
 
 # ---------------------------------------------------------------------------
 # allow_lazy_installs gating

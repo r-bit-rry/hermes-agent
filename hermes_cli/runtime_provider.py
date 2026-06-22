@@ -1517,6 +1517,13 @@ def _resolve_explicit_runtime(
 
             api_key = resolve_anthropic_token()
             if not api_key:
+                from agent.anthropic_adapter import build_vertex_adc_runtime_dict
+
+                vertex_runtime = build_vertex_adc_runtime_dict(
+                    requested_provider, base_url=base_url
+                )
+                if vertex_runtime:
+                    return vertex_runtime
                 raise AuthError(
                     "No Anthropic credentials found. Set ANTHROPIC_TOKEN or ANTHROPIC_API_KEY, "
                     "run 'claude setup-token', or authenticate with 'claude /login'."
@@ -2091,9 +2098,17 @@ def resolve_runtime_provider(
                     "config.yaml model section at a custom env var."
                 )
         else:
-            from agent.anthropic_adapter import resolve_anthropic_token
+            from agent.anthropic_adapter import (
+                build_vertex_adc_runtime_dict,
+                resolve_anthropic_token,
+            )
             token = resolve_anthropic_token()
             if not token:
+                vertex_runtime = build_vertex_adc_runtime_dict(
+                    requested_provider, base_url=base_url
+                )
+                if vertex_runtime:
+                    return vertex_runtime
                 raise AuthError(
                     "No Anthropic credentials found. Set ANTHROPIC_TOKEN or ANTHROPIC_API_KEY, "
                     "run 'claude setup-token', or authenticate with 'claude /login'."
@@ -2106,6 +2121,28 @@ def resolve_runtime_provider(
             "source": "env",
             "requested_provider": requested_provider,
         }
+
+    # Google Cloud Vertex AI (AnthropicVertex SDK via ADC)
+    if provider in {"vertex", "vertex-ai", "google-vertex"}:
+        from agent.anthropic_adapter import build_vertex_adc_runtime_dict
+
+        cfg_base_url = ""
+        cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
+        if cfg_provider in {"vertex", "vertex-ai", "google-vertex"}:
+            cfg_base_url = str(model_cfg.get("base_url") or "").strip()
+        vertex_runtime = build_vertex_adc_runtime_dict(
+            requested_provider,
+            base_url=cfg_base_url or None,
+        )
+        if not vertex_runtime:
+            raise AuthError(
+                "No GCP project found for Vertex AI. Set one of:\n"
+                "  - VERTEX_PROJECT_ID\n"
+                "  - ANTHROPIC_VERTEX_PROJECT_ID\n"
+                "  - GOOGLE_CLOUD_PROJECT\n",
+                code="no_vertex_credentials",
+            )
+        return vertex_runtime
 
     # AWS Bedrock (native Converse API via boto3)
     if provider == "bedrock":

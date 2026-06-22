@@ -450,6 +450,98 @@ def _normalize_base_url_text(base_url) -> str:
     return str(base_url).strip()
 
 
+_VERTEX_AIPLATFORM_HOST_SUFFIX = "-aiplatform.googleapis.com"
+
+
+def _vertex_aiplatform_hostname(base_url: str | None) -> str:
+    normalized = _normalize_base_url_text(base_url).lower()
+    if not normalized:
+        return ""
+    return normalized.split("://", 1)[-1].split("/", 1)[0].rstrip(".")
+
+
+def _is_vertex_anthropic_endpoint(base_url: str | None) -> bool:
+    hostname = _vertex_aiplatform_hostname(base_url)
+    return bool(hostname) and hostname.endswith(_VERTEX_AIPLATFORM_HOST_SUFFIX)
+
+
+def _resolve_vertex_project_and_region(base_url: str | None) -> tuple[str, str]:
+    project_id = (
+        os.getenv("VERTEX_PROJECT_ID")
+        or os.getenv("ANTHROPIC_VERTEX_PROJECT_ID")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or ""
+    ).strip()
+    region = (
+        os.getenv("VERTEX_REGION")
+        or os.getenv("CLOUD_ML_REGION")
+        or ""
+    ).strip()
+    if not region:
+        hostname = _vertex_aiplatform_hostname(base_url)
+        if hostname.endswith(_VERTEX_AIPLATFORM_HOST_SUFFIX):
+            region = hostname.removesuffix(_VERTEX_AIPLATFORM_HOST_SUFFIX)
+    return project_id, (region or "global")
+
+
+def _vertex_aiplatform_base_url(region: str) -> str:
+    return f"https://{region}-aiplatform.googleapis.com"
+
+
+def _resolve_vertex_agent_credentials(
+    base_url: str | None,
+    *,
+    project_id: str | None = None,
+    region: str | None = None,
+) -> tuple[str, str]:
+    env_project, env_region = _resolve_vertex_project_and_region(base_url)
+    return (
+        (project_id or "").strip() or env_project,
+        (region or "").strip() or env_region,
+    )
+
+
+def build_vertex_adc_runtime_dict(
+    requested_provider: str,
+    *,
+    base_url: str | None = None,
+) -> dict | None:
+    project_id, region = _resolve_vertex_project_and_region(base_url)
+    if not project_id:
+        return None
+    return {
+        "provider": "vertex",
+        "api_mode": "anthropic_messages",
+        "base_url": _vertex_aiplatform_base_url(region),
+        "api_key": "vertex-adc-auth",
+        "source": "env",
+        "region": region,
+        "project_id": project_id,
+        "vertex_anthropic": True,
+        "requested_provider": requested_provider,
+    }
+
+
+def resolve_vertex_auxiliary_credentials(
+    base_url: str | None = None,
+) -> tuple[str, str] | None:
+    project_id, region = _resolve_vertex_project_and_region(base_url)
+    if not project_id:
+        return None
+    return "vertex-adc-auth", _vertex_aiplatform_base_url(region)
+
+
+def _lazy_ensure_feature(feature: str, *, prompt: bool = False) -> None:
+    try:
+        from tools.lazy_deps import ensure as _lazy_ensure
+
+        _lazy_ensure(feature, prompt=prompt)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+
 def _is_third_party_anthropic_endpoint(base_url: str | None) -> bool:
     """Return True for non-Anthropic endpoints using the Anthropic Messages API.
 
@@ -843,6 +935,18 @@ def build_anthropic_client(
     if normalized_base_url:
         import re as _re
         normalized_base_url = _re.sub(r"/v1/?$", "", normalized_base_url.rstrip("/"))
+
+    if _is_vertex_anthropic_endpoint(normalized_base_url):
+        vertex_project, vertex_region = _resolve_vertex_project_and_region(normalized_base_url)
+        if api_key == "vertex-adc-auth" or vertex_project:
+            if not vertex_project:
+                raise ValueError(
+                    "Vertex Anthropic endpoint requested but no Vertex project "
+                    "is configured. Set VERTEX_PROJECT_ID, "
+                    "ANTHROPIC_VERTEX_PROJECT_ID, or GOOGLE_CLOUD_PROJECT."
+                )
+            return build_anthropic_vertex_client(vertex_project, vertex_region)
+
     _read_timeout = timeout if (isinstance(timeout, (int, float)) and timeout > 0) else 900.0
     kwargs = {
         "timeout": Timeout(timeout=float(_read_timeout), connect=10.0),
@@ -942,6 +1046,30 @@ def build_anthropic_client(
     return client
 
 
+def build_anthropic_vertex_client(project_id: str, region: str):
+    """Create an AnthropicVertex client for Vertex AI-hosted Claude models."""
+    _lazy_ensure_feature("provider.anthropic_vertex")
+    _anthropic_sdk = _get_anthropic_sdk()
+    if _anthropic_sdk is None:
+        raise ImportError(
+            "The 'anthropic' package is required for the Vertex provider. "
+            "Install it with: pip install 'anthropic[vertex]'"
+        )
+    if not hasattr(_anthropic_sdk, "AnthropicVertex"):
+        raise ImportError(
+            "anthropic.AnthropicVertex not available. "
+            "Install with: pip install 'anthropic[vertex]'"
+        )
+    from httpx import Timeout
+
+    return _anthropic_sdk.AnthropicVertex(
+        project_id=project_id,
+        region=region,
+        timeout=Timeout(timeout=900.0, connect=10.0),
+        default_headers={"anthropic-beta": ",".join([*_COMMON_BETAS, _CONTEXT_1M_BETA])},
+    )
+
+
 def build_anthropic_bedrock_client(region: str):
     """Create an AnthropicBedrock client for Bedrock Claude models.
 
@@ -1016,12 +1144,12 @@ def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
         return None
 
     raw = result.stdout.strip()
-    if not raw:
+    if not raw or not isinstance(raw, str):
         return None
 
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         logger.debug("Keychain: credentials payload is not valid JSON")
         return None
 
