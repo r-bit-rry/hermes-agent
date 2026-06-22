@@ -538,8 +538,8 @@ def _lazy_ensure_feature(feature: str, *, prompt: bool = False) -> None:
         _lazy_ensure(feature, prompt=prompt)
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("lazy_ensure_feature(%r) failed: %s", feature, exc)
 
 
 def _is_third_party_anthropic_endpoint(base_url: str | None) -> bool:
@@ -1144,12 +1144,12 @@ def _read_claude_code_credentials_from_keychain() -> Optional[Dict[str, Any]]:
         return None
 
     raw = result.stdout.strip()
-    if not raw or not isinstance(raw, str):
+    if not raw:
         return None
 
     try:
         data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError:
         logger.debug("Keychain: credentials payload is not valid JSON")
         return None
 
