@@ -5532,6 +5532,103 @@ class TestAnthropicCredentialRefresh:
 
 
 
+class TestVertexAnthropicMainAgentPath:
+    """Vertex init/rebuild must resolve project via the shared env helper."""
+
+    def test_vertex_init_uses_google_cloud_project_only(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj-only")
+        monkeypatch.setenv("VERTEX_REGION", "us-central1")
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agent.anthropic_adapter.build_anthropic_vertex_client") as mock_vertex,
+        ):
+            mock_vertex.return_value = MagicMock()
+            agent = AIAgent(
+                api_key="vertex-adc-auth",
+                base_url="https://us-central1-aiplatform.googleapis.com",
+                provider="vertex",
+                api_mode="anthropic_messages",
+                model="claude-sonnet-4-20250514",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        mock_vertex.assert_called_once_with("gcp-proj-only", "us-central1")
+        assert agent._vertex_project == "gcp-proj-only"
+
+    def test_rebuild_anthropic_client_vertex_uses_google_cloud_project_only(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-rebuild-proj")
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agent.anthropic_adapter.build_anthropic_vertex_client", return_value=MagicMock()),
+        ):
+            agent = AIAgent(
+                api_key="vertex-adc-auth",
+                provider="vertex",
+                api_mode="anthropic_messages",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        agent._vertex_project = ""
+        agent._vertex_region = ""
+
+        with patch("agent.anthropic_adapter.build_anthropic_vertex_client") as mock_rebuild:
+            mock_rebuild.return_value = MagicMock()
+            agent._rebuild_anthropic_client()
+
+        mock_rebuild.assert_called_once_with("gcp-rebuild-proj", "global")
+
+    def test_vertex_provider_defaults_to_anthropic_messages_api_mode(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj-only")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agent.anthropic_adapter.build_anthropic_vertex_client", return_value=MagicMock()),
+        ):
+            agent = AIAgent(
+                api_key="vertex-adc-auth",
+                provider="vertex",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert agent.api_mode == "anthropic_messages"
+
+    def test_vertex_provider_normalizes_main_model_dot_notation(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj-only")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+
+        with (
+            patch("run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("agent.anthropic_adapter.build_anthropic_vertex_client", return_value=MagicMock()),
+        ):
+            agent = AIAgent(
+                api_key="vertex-adc-auth",
+                provider="vertex",
+                model="claude-sonnet-4.6",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert agent.model == "claude-sonnet-4-6"
+
+
 # ===================================================================
 # _streaming_api_call tests
 # ===================================================================
