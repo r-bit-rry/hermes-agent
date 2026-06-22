@@ -1076,6 +1076,153 @@ class TestOpenRouterPaidLaneGuard:
         assert not _is_free_model(None)
 
 
+
+def test_resolve_provider_client_uses_vertex_adc_without_anthropic_token(monkeypatch):
+    monkeypatch.setenv("VERTEX_PROJECT_ID", "proj-123")
+    monkeypatch.setenv("VERTEX_REGION", "global")
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"model": {"provider": "anthropic"}})
+
+    mock_client = MagicMock()
+    mock_client.api_key = "vertex-adc-auth"
+    mock_client.base_url = "https://global-aiplatform.googleapis.com"
+
+    with patch("agent.anthropic_adapter.resolve_anthropic_token", return_value=None), \
+         patch("agent.anthropic_adapter.build_anthropic_client") as mock_build, \
+         patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
+        mock_build.return_value = mock_client
+        client, model = resolve_provider_client(provider="anthropic")
+
+    assert client is not None
+    assert client.api_key == "vertex-adc-auth"
+    assert client.base_url == "https://global-aiplatform.googleapis.com"
+    assert mock_build.call_args.args[:2] == (
+        "vertex-adc-auth",
+        "https://global-aiplatform.googleapis.com",
+    )
+
+
+class TestAuxiliaryClientVertexResolution:
+    def test_vertex_returns_client_with_gcp_project(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
+        monkeypatch.setenv("VERTEX_REGION", "us-central1")
+
+        with patch(
+            "agent.anthropic_adapter.build_anthropic_vertex_client",
+            return_value=MagicMock(),
+        ):
+            from agent.auxiliary_client import AnthropicAuxiliaryClient, resolve_provider_client
+
+            client, model = resolve_provider_client("vertex", None)
+
+        assert client is not None
+        assert isinstance(client, AnthropicAuxiliaryClient)
+        assert client.api_key == "vertex-adc-auth"
+        assert "us-central1" in client.base_url
+        assert model is not None
+
+    def test_vertex_returns_none_without_gcp_project(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        from agent.auxiliary_client import resolve_provider_client
+
+        client, model = resolve_provider_client("vertex", None)
+
+        assert client is None
+        assert model is None
+
+    def test_try_vertex_default_model_uses_vertex_date_suffix(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+
+        with patch(
+            "agent.anthropic_adapter.build_anthropic_vertex_client",
+            return_value=MagicMock(),
+        ):
+            from agent.auxiliary_client import _try_vertex
+
+            client, model = _try_vertex()
+
+        assert model == "claude-haiku-4-5@20251001"
+        assert client.chat.completions._model == "claude-haiku-4-5@20251001"
+
+    def test_try_anthropic_vertex_adc_normalizes_default_model(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
+
+        with (
+            patch("agent.anthropic_adapter.resolve_anthropic_token", return_value=None),
+            patch("agent.anthropic_adapter.build_anthropic_client", return_value=MagicMock()),
+            patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)),
+        ):
+            from agent.auxiliary_client import _try_anthropic
+
+            client, model = _try_anthropic()
+
+        assert model == "claude-haiku-4-5@20251001"
+        assert client.chat.completions._model == "claude-haiku-4-5@20251001"
+
+    def test_try_anthropic_vertex_adc_uses_config_regional_base_url(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_REGION", raising=False)
+        monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj")
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {
+                "model": {
+                    "provider": "anthropic",
+                    "base_url": "https://us-central1-aiplatform.googleapis.com",
+                }
+            },
+        )
+
+        with (
+            patch("agent.anthropic_adapter.resolve_anthropic_token", return_value=None),
+            patch("agent.anthropic_adapter.build_anthropic_client", return_value=MagicMock()),
+            patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)),
+        ):
+            from agent.auxiliary_client import _try_anthropic
+
+            client, model = _try_anthropic()
+
+        assert client is not None
+        assert client.base_url == "https://us-central1-aiplatform.googleapis.com"
+
+    def test_resolve_provider_client_vertex_uses_main_runtime_regional_base_url(self, monkeypatch):
+        monkeypatch.delenv("VERTEX_REGION", raising=False)
+        monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj")
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {"model": {"provider": "anthropic"}},
+        )
+
+        with (
+            patch(
+                "agent.anthropic_adapter.build_anthropic_vertex_client",
+                return_value=MagicMock(),
+            ),
+            patch("agent.anthropic_adapter.build_anthropic_client", return_value=MagicMock()),
+        ):
+            from agent.auxiliary_client import AnthropicAuxiliaryClient, resolve_provider_client
+
+            client, model = resolve_provider_client(
+                "vertex",
+                None,
+                main_runtime={
+                    "provider": "anthropic",
+                    "base_url": "https://us-central1-aiplatform.googleapis.com",
+                    "api_key": "vertex-adc-auth",
+                    "api_mode": "anthropic_messages",
+                },
+            )
+
+        assert client is not None
+        assert isinstance(client, AnthropicAuxiliaryClient)
+        assert client.base_url == "https://us-central1-aiplatform.googleapis.com"
+
 class TestGetTextAuxiliaryClient:
     """Test the full resolution chain for get_text_auxiliary_client."""
 

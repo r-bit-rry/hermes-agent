@@ -3725,6 +3725,16 @@ def _try_azure_foundry(
     return client, final_model
 
 
+_VERTEX_DEFAULT_AUX_MODEL = "claude-haiku-4-5@20251001"
+
+
+def _vertex_aux_model(raw_model: str) -> str:
+    from hermes_cli.model_normalize import normalize_model_for_provider
+
+    candidate = (raw_model or "").strip() or _VERTEX_DEFAULT_AUX_MODEL
+    return normalize_model_for_provider(candidate, "vertex")
+
+
 def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optional[str]]:
     try:
         from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token
@@ -3747,20 +3757,9 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
         # healthy (it resolves the env token directly).
         entry = None
         token = explicit_api_key or resolve_anthropic_token()
-    if not token:
-        return None, None
 
-    # Allow base URL override from config.yaml model.base_url, but only when:
-    #   1. the configured provider is anthropic (otherwise a non-Anthropic
-    #      base_url, e.g. Codex endpoint, would leak into Anthropic requests), AND
-    #   2. the override URL actually points at an Anthropic-compatible endpoint.
-    # Without gate (2), operators who route main-session traffic through a
-    # non-Anthropic provider that accepts Anthropic-format requests (e.g.
-    # OpenRouter at openrouter.ai/api/v1, with provider=anthropic in config.yaml)
-    # would have every auxiliary side-channel call (memory extractors,
-    # reflection, vision, title generation) 401 from the foreign host —
-    # see issue #52608.
     base_url = _pool_runtime_base_url(entry, _ANTHROPIC_DEFAULT_BASE_URL) if pool_present else _ANTHROPIC_DEFAULT_BASE_URL
+    cfg_base_url = ""
     try:
         from hermes_cli.config import load_config_readonly
         cfg = load_config_readonly()
@@ -3768,15 +3767,32 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
         if isinstance(model_cfg, dict):
             cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
             if cfg_provider == "anthropic":
-                cfg_base_url = (model_cfg.get("base_url") or "").strip().rstrip("/")
-                if cfg_base_url and _is_anthropic_compatible_host(cfg_base_url):
-                    base_url = cfg_base_url
+                # Allow base URL override from config.yaml model.base_url, but
+                # only when it still points at an Anthropic-compatible host.
+                # This keeps non-Anthropic endpoints (e.g. Codex/OpenRouter)
+                # from leaking into Anthropic auxiliary side-channel traffic.
+                candidate_base_url = (model_cfg.get("base_url") or "").strip().rstrip("/")
+                if candidate_base_url and _is_anthropic_compatible_host(candidate_base_url):
+                    cfg_base_url = candidate_base_url
+                    base_url = candidate_base_url
     except Exception:
         pass
 
+    if not token:
+        from agent.anthropic_adapter import resolve_vertex_auxiliary_credentials
+
+        vertex_runtime = resolve_vertex_auxiliary_credentials(cfg_base_url or None)
+        if vertex_runtime is None:
+            return None, None
+        token, base_url = vertex_runtime
+
     from agent.anthropic_adapter import _is_oauth_token
     is_oauth = _is_oauth_token(token)
-    model = _get_aux_model_for_provider("anthropic") or "claude-haiku-4-5-20251001"
+    raw_model = _get_aux_model_for_provider("anthropic") or "claude-haiku-4-5-20251001"
+    if token == "vertex-adc-auth":
+        model = _vertex_aux_model(raw_model)
+    else:
+        model = raw_model
     if _aux_probe_active():
         # Availability probe — token + SDK adapter import resolved; skip
         # real client construction.
@@ -3790,6 +3806,53 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
         # when _anthropic_sdk is None.  Treat as unavailable.
         return None, None
     return AnthropicAuxiliaryClient(real_client, model, token, base_url, is_oauth=is_oauth), model
+
+
+def _try_vertex(
+    explicit_api_key: str = None,
+    explicit_base_url: str | None = None,
+) -> Tuple[Optional[Any], Optional[str]]:
+    try:
+        from agent.anthropic_adapter import (
+            build_anthropic_vertex_client,
+            _resolve_vertex_project_and_region,
+            resolve_vertex_auxiliary_credentials,
+        )
+    except ImportError:
+        return None, None
+
+    base_url = (explicit_base_url or "").strip().rstrip("/")
+    if not base_url:
+        try:
+            from hermes_cli.config import load_config
+            cfg = load_config()
+            model_cfg = cfg.get("model")
+            if isinstance(model_cfg, dict):
+                cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
+                if cfg_provider in {"vertex", "vertex-ai", "google-vertex"}:
+                    base_url = (model_cfg.get("base_url") or "").strip().rstrip("/")
+        except Exception:
+            pass
+
+    vertex_runtime = resolve_vertex_auxiliary_credentials(base_url or None)
+    if vertex_runtime is None:
+        return None, None
+    token, base_url = vertex_runtime
+    if explicit_api_key:
+        token = explicit_api_key.strip() or token
+
+    project_id, region = _resolve_vertex_project_and_region(base_url or None)
+    if not project_id:
+        return None, None
+
+    model = _vertex_aux_model(_get_aux_model_for_provider("vertex"))
+    try:
+        real_client = build_anthropic_vertex_client(project_id, region)
+    except ImportError:
+        return None, None
+    return AnthropicAuxiliaryClient(
+        real_client, model, token, base_url, is_oauth=False,
+    ), model
 
 
 _AUTO_PROVIDER_LABELS = {
@@ -6499,6 +6562,26 @@ def resolve_provider_client(
                 "resolve_provider_client: azure-foundry requested but "
                 "runtime resolution failed (run: hermes doctor for "
                 "diagnostics)"
+            )
+            return None, None
+        final_model = _normalize_resolved_model(model or default_model, provider)
+        return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
+                else (client, final_model))
+
+    # ── Google Cloud Vertex AI (ADC → AnthropicVertex SDK) ───────────
+    if provider == "vertex":
+        runtime = _normalize_main_runtime(main_runtime)
+        runtime_base = str(runtime.get("base_url") or "").strip().rstrip("/")
+        vertex_base = (explicit_base_url or "").strip().rstrip("/") or runtime_base or None
+        client, default_model = _try_vertex(
+            explicit_api_key=explicit_api_key,
+            explicit_base_url=vertex_base,
+        )
+        if client is None:
+            logger.warning(
+                "resolve_provider_client: vertex requested but no GCP project "
+                "found (set VERTEX_PROJECT_ID, ANTHROPIC_VERTEX_PROJECT_ID, "
+                "or GOOGLE_CLOUD_PROJECT)"
             )
             return None, None
         final_model = _normalize_resolved_model(model or default_model, provider)
