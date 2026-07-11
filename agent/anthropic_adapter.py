@@ -1069,7 +1069,9 @@ def build_anthropic_vertex_client(project_id: str, region: str):
         project_id=project_id,
         region=region,
         timeout=Timeout(timeout=900.0, connect=10.0),
-        default_headers={"anthropic-beta": ",".join([*_COMMON_BETAS, _CONTEXT_1M_BETA])},
+        # Vertex rejects context-1m-2025-08-07 (HTTP 400 "Unexpected value(s)")
+        # so only send the common betas that Vertex accepts.
+        default_headers={"anthropic-beta": ",".join(_COMMON_BETAS)},
     )
 
 
