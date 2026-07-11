@@ -2092,6 +2092,8 @@ def resolve_provider(
         "tencent-cloud": "tencent-tokenhub", "tencentmaas": "tencent-tokenhub",
         "aws": "bedrock", "aws-bedrock": "bedrock", "amazon-bedrock": "bedrock", "amazon": "bedrock",
         "vertex-ai": "vertex", "google-vertex": "vertex",
+        "gcp-vertex": "vertex", "vertexai": "vertex",
+        "anthropic-vertex": "anthropic-vertex", "claude-vertex": "anthropic-vertex",
         "go": "opencode-go", "opencode-go-sub": "opencode-go",
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
         "lmstudio": "lmstudio", "lm-studio": "lmstudio", "lm_studio": "lmstudio",
@@ -2117,10 +2119,13 @@ def resolve_provider(
         return "openrouter"
     if normalized == "custom":
         return "custom"
-    # Vertex uses ADC (not PROVIDER_REGISTRY api_key auth) — runtime_provider
-    # builds the AnthropicVertex client after resolve_provider returns "vertex".
+    # Vertex (Gemini OpenAI-compat) and Anthropic-on-Vertex both use ADC —
+    # not PROVIDER_REGISTRY api_key auth. Return early so unknown-provider
+    # checks don't reject them before runtime_provider builds the client.
     if normalized == "vertex":
         return "vertex"
+    if normalized == "anthropic-vertex":
+        return "anthropic-vertex"
     if normalized in PROVIDER_REGISTRY:
         return normalized
     if normalized != "auto":

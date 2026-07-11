@@ -933,6 +933,7 @@ _API_KEY_PROVIDER_AUX_MODELS_FALLBACK: Dict[str, str] = {
     "gmi": "google/gemini-3.1-flash-lite-preview",
     "anthropic": "claude-haiku-4-5-20251001",
     "ai-gateway": "google/gemini-3-flash",
+    "anthropic-vertex": "claude-haiku-4-5-20251001",
     "opencode-zen": "gemini-3-flash",
     "opencode-go": "glm-5",
     "kilocode": "google/gemini-3.6-flash",
@@ -1346,8 +1347,13 @@ def _is_anthropic_compatible_host(url: str) -> bool:
         return False
     try:
         from urllib.parse import urlparse
+        from agent.anthropic_adapter import _is_vertex_anthropic_endpoint
+
         host = (urlparse(url).hostname or "").strip().lower().rstrip(".")
-        return host in _ANTHROPIC_COMPATIBLE_HOSTS
+        if host in _ANTHROPIC_COMPATIBLE_HOSTS:
+            return True
+        # Vertex AI Anthropic Claude endpoints (…-aiplatform.googleapis.com)
+        return _is_vertex_anthropic_endpoint(url)
     except Exception:
         return False
 
@@ -3732,7 +3738,7 @@ def _vertex_aux_model(raw_model: str) -> str:
     from hermes_cli.model_normalize import normalize_model_for_provider
 
     candidate = (raw_model or "").strip() or _VERTEX_DEFAULT_AUX_MODEL
-    return normalize_model_for_provider(candidate, "vertex")
+    return normalize_model_for_provider(candidate, "anthropic-vertex")
 
 
 def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optional[str]]:
@@ -3808,7 +3814,7 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
     return AnthropicAuxiliaryClient(real_client, model, token, base_url, is_oauth=is_oauth), model
 
 
-def _try_vertex(
+def _try_anthropic_vertex(
     explicit_api_key: str = None,
     explicit_base_url: str | None = None,
 ) -> Tuple[Optional[Any], Optional[str]]:
@@ -3829,7 +3835,11 @@ def _try_vertex(
             model_cfg = cfg.get("model")
             if isinstance(model_cfg, dict):
                 cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
-                if cfg_provider in {"vertex", "vertex-ai", "google-vertex"}:
+                cfg_api_mode = str(model_cfg.get("api_mode") or "").strip()
+                if cfg_provider == "anthropic-vertex" or (
+                    cfg_provider in {"vertex", "vertex-ai", "google-vertex"}
+                    and cfg_api_mode == "anthropic_messages"
+                ):
                     base_url = (model_cfg.get("base_url") or "").strip().rstrip("/")
         except Exception:
             pass
@@ -3845,7 +3855,10 @@ def _try_vertex(
     if not project_id:
         return None, None
 
-    model = _vertex_aux_model(_get_aux_model_for_provider("vertex"))
+    model = _vertex_aux_model(
+        _get_aux_model_for_provider("anthropic-vertex")
+        or _get_aux_model_for_provider("vertex")
+    )
     try:
         real_client = build_anthropic_vertex_client(project_id, region)
     except ImportError:
@@ -6568,18 +6581,28 @@ def resolve_provider_client(
         return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                 else (client, final_model))
 
-    # ── Google Cloud Vertex AI (ADC → AnthropicVertex SDK) ───────────
-    if provider == "vertex":
-        runtime = _normalize_main_runtime(main_runtime)
+    # ── Anthropic on Vertex AI (ADC → AnthropicVertex SDK) ────────────
+    runtime = _normalize_main_runtime(main_runtime)
+    runtime_api_key = str(runtime.get("api_key") or "").strip()
+    runtime_api_mode = str(runtime.get("api_mode") or "").strip()
+    legacy_vertex_anthropic = (
+        provider == "vertex"
+        and (
+            runtime_api_key == "vertex-adc-auth"
+            or runtime_api_mode == "anthropic_messages"
+            or str(explicit_api_key or "").strip() == "vertex-adc-auth"
+        )
+    )
+    if provider == "anthropic-vertex" or legacy_vertex_anthropic:
         runtime_base = str(runtime.get("base_url") or "").strip().rstrip("/")
         vertex_base = (explicit_base_url or "").strip().rstrip("/") or runtime_base or None
-        client, default_model = _try_vertex(
+        client, default_model = _try_anthropic_vertex(
             explicit_api_key=explicit_api_key,
             explicit_base_url=vertex_base,
         )
         if client is None:
             logger.warning(
-                "resolve_provider_client: vertex requested but no GCP project "
+                "resolve_provider_client: anthropic-vertex requested but no GCP project "
                 "found (set VERTEX_PROJECT_ID, ANTHROPIC_VERTEX_PROJECT_ID, "
                 "or GOOGLE_CLOUD_PROJECT)"
             )

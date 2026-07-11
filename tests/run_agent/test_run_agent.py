@@ -5550,7 +5550,7 @@ class TestVertexAnthropicMainAgentPath:
             agent = AIAgent(
                 api_key="vertex-adc-auth",
                 base_url="https://us-central1-aiplatform.googleapis.com",
-                provider="vertex",
+                provider="anthropic-vertex",
                 api_mode="anthropic_messages",
                 model="claude-sonnet-4-20250514",
                 quiet_mode=True,
@@ -5573,7 +5573,7 @@ class TestVertexAnthropicMainAgentPath:
         ):
             agent = AIAgent(
                 api_key="vertex-adc-auth",
-                provider="vertex",
+                provider="anthropic-vertex",
                 api_mode="anthropic_messages",
                 quiet_mode=True,
                 skip_context_files=True,
@@ -5600,7 +5600,7 @@ class TestVertexAnthropicMainAgentPath:
         ):
             agent = AIAgent(
                 api_key="vertex-adc-auth",
-                provider="vertex",
+                provider="anthropic-vertex",
                 quiet_mode=True,
                 skip_context_files=True,
                 skip_memory=True,
@@ -5619,7 +5619,7 @@ class TestVertexAnthropicMainAgentPath:
         ):
             agent = AIAgent(
                 api_key="vertex-adc-auth",
-                provider="vertex",
+                provider="anthropic-vertex",
                 model="claude-sonnet-4.6",
                 quiet_mode=True,
                 skip_context_files=True,

@@ -658,9 +658,15 @@ def init_agent(
         # use a URL convention ending in /anthropic. Auto-detect these so the
         # Anthropic Messages API adapter is used instead of chat completions.
         agent.api_mode = "anthropic_messages"
-    elif agent.provider in {"vertex", "vertex-ai", "google-vertex"}:
+    elif agent.provider == "anthropic-vertex" or (
+        agent.provider in {"vertex", "vertex-ai", "google-vertex"}
+        and (
+            api_mode == "anthropic_messages"
+            or str(api_key or "").strip() == "vertex-adc-auth"
+        )
+    ):
         agent.api_mode = "anthropic_messages"
-        agent.provider = "vertex"
+        agent.provider = "anthropic-vertex"
     elif agent.provider == "bedrock" or (
         agent._base_url_hostname.startswith("bedrock-runtime.")
         and base_url_host_matches(agent._base_url_lower, "amazonaws.com")
@@ -1051,7 +1057,7 @@ def init_agent(
         # Bedrock + Claude → use AnthropicBedrock SDK for full feature parity
         # (prompt caching, thinking budgets, adaptive thinking).
         _is_bedrock_anthropic = agent.provider == "bedrock"
-        _is_vertex_anthropic = agent.provider == "vertex"
+        _is_vertex_anthropic = agent.provider == "anthropic-vertex"
         if _is_bedrock_anthropic:
             from agent.anthropic_adapter import build_anthropic_bedrock_client
             _region_match = re.search(r"bedrock-runtime\.([a-z0-9-]+)\.", base_url or "")

@@ -510,7 +510,7 @@ def build_vertex_adc_runtime_dict(
     if not project_id:
         return None
     return {
-        "provider": "vertex",
+        "provider": "anthropic-vertex",
         "api_mode": "anthropic_messages",
         "base_url": _vertex_aiplatform_base_url(region),
         "api_key": "vertex-adc-auth",
@@ -938,7 +938,10 @@ def build_anthropic_client(
 
     if _is_vertex_anthropic_endpoint(normalized_base_url):
         vertex_project, vertex_region = _resolve_vertex_project_and_region(normalized_base_url)
-        if api_key == "vertex-adc-auth" or vertex_project:
+        # Only route through AnthropicVertex when explicitly using ADC auth.
+        # A bare aiplatform hostname with a real API key could be Gemini Vertex
+        # OpenAI-compat traffic and must not force AnthropicVertex.
+        if api_key == "vertex-adc-auth":
             if not vertex_project:
                 raise ValueError(
                     "Vertex Anthropic endpoint requested but no Vertex project "

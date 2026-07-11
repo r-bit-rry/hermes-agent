@@ -844,22 +844,47 @@ def test_resolve_provider_explicit_vertex():
 def test_resolve_runtime_provider_vertex_real_resolution_chain(monkeypatch):
     from hermes_cli.auth import resolve_provider
 
-    monkeypatch.setattr(rp, "_get_model_config", lambda: {"provider": "vertex"})
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "anthropic-vertex"},
+    )
     monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
     monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-vertex-proj")
     monkeypatch.setenv("VERTEX_REGION", "global")
 
-    assert resolve_provider("vertex") == "vertex"
+    assert resolve_provider("anthropic-vertex") == "anthropic-vertex"
 
-    resolved = rp.resolve_runtime_provider(requested="vertex")
+    resolved = rp.resolve_runtime_provider(requested="anthropic-vertex")
 
-    assert resolved["provider"] == "vertex"
+    assert resolved["provider"] == "anthropic-vertex"
     assert resolved["api_mode"] == "anthropic_messages"
     assert resolved["api_key"] == "vertex-adc-auth"
     assert resolved["project_id"] == "gcp-vertex-proj"
     assert resolved["region"] == "global"
     assert resolved["base_url"] == "https://global-aiplatform.googleapis.com"
+    assert resolved["vertex_anthropic"] is True
+
+
+def test_resolve_runtime_provider_legacy_vertex_anthropic_messages(monkeypatch):
+    """provider=vertex + api_mode=anthropic_messages still routes to AnthropicVertex."""
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {"provider": "vertex", "api_mode": "anthropic_messages"},
+    )
+    monkeypatch.delenv("VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-legacy-proj")
+    monkeypatch.setenv("VERTEX_REGION", "global")
+
+    resolved = rp.resolve_runtime_provider(requested="vertex")
+
+    assert resolved["provider"] == "anthropic-vertex"
+    assert resolved["api_mode"] == "anthropic_messages"
+    assert resolved["api_key"] == "vertex-adc-auth"
+    assert resolved["project_id"] == "gcp-legacy-proj"
     assert resolved["vertex_anthropic"] is True
 
 

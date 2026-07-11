@@ -6157,7 +6157,10 @@ class AIAgent:
             from agent.anthropic_adapter import build_anthropic_bedrock_client
             region = getattr(self, "_bedrock_region", "us-east-1") or "us-east-1"
             self._anthropic_client = build_anthropic_bedrock_client(region)
-        elif getattr(self, "provider", None) == "vertex":
+        elif getattr(self, "provider", None) == "anthropic-vertex" or (
+            getattr(self, "provider", None) == "vertex"
+            and getattr(self, "_anthropic_api_key", None) == "vertex-adc-auth"
+        ):
             from agent.anthropic_adapter import (
                 build_anthropic_vertex_client,
                 _resolve_vertex_agent_credentials,

@@ -1114,7 +1114,7 @@ class TestAuxiliaryClientVertexResolution:
         ):
             from agent.auxiliary_client import AnthropicAuxiliaryClient, resolve_provider_client
 
-            client, model = resolve_provider_client("vertex", None)
+            client, model = resolve_provider_client("anthropic-vertex", None)
 
         assert client is not None
         assert isinstance(client, AnthropicAuxiliaryClient)
@@ -1129,7 +1129,7 @@ class TestAuxiliaryClientVertexResolution:
 
         from agent.auxiliary_client import resolve_provider_client
 
-        client, model = resolve_provider_client("vertex", None)
+        client, model = resolve_provider_client("anthropic-vertex", None)
 
         assert client is None
         assert model is None
@@ -1142,9 +1142,9 @@ class TestAuxiliaryClientVertexResolution:
             "agent.anthropic_adapter.build_anthropic_vertex_client",
             return_value=MagicMock(),
         ):
-            from agent.auxiliary_client import _try_vertex
+            from agent.auxiliary_client import _try_anthropic_vertex
 
-            client, model = _try_vertex()
+            client, model = _try_anthropic_vertex()
 
         assert model == "claude-haiku-4-5@20251001"
         assert client.chat.completions._model == "claude-haiku-4-5@20251001"

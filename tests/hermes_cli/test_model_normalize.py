@@ -49,7 +49,7 @@ class TestVertexModelNormalization:
         ("anthropic/claude-sonnet-4.6", "claude-sonnet-4-6"),
     ])
     def test_vertex_normalizes_models(self, model, expected):
-        result = normalize_model_for_provider(model, "vertex")
+        result = normalize_model_for_provider(model, "anthropic-vertex")
         assert result == expected
 
 

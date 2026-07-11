@@ -511,7 +511,7 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
         return _prepend_vendor(name)
 
     # --- Vertex: Anthropic-style dots/hyphens plus @ snapshot dates ---
-    if provider == "vertex":
+    if provider == "anthropic-vertex":
         return _normalize_for_vertex(name)
 
     # --- OpenCode Zen / OpenCode Go: flat-namespace resellers.

@@ -1764,28 +1764,38 @@ def resolve_runtime_provider(
     # the project ID + region. The token is re-minted per call (5-min refresh
     # margin) by get_vertex_config(); mid-session expiry is additionally
     # recovered on 401 by run_agent._try_refresh_vertex_client_credentials().
+    #
+    # Legacy Anthropic-on-Vertex configs used provider=vertex with
+    # api_mode=anthropic_messages. Defer those to the anthropic-vertex handler
+    # below so Gemini Vertex keeps the bare ``vertex`` name.
     if requested_provider in ("vertex", "google-vertex", "vertex-ai", "gcp-vertex", "vertexai"):
-        from agent.vertex_adapter import get_vertex_config
+        _vertex_cfg = _get_model_config() or {}
+        _legacy_anthropic_vertex = (
+            isinstance(_vertex_cfg, dict)
+            and str(_vertex_cfg.get("api_mode") or "").strip() == "anthropic_messages"
+        )
+        if not _legacy_anthropic_vertex:
+            from agent.vertex_adapter import get_vertex_config
 
-        token, base_url = get_vertex_config()
-        if not token or not base_url:
-            raise AuthError(
-                "Vertex AI credentials could not be resolved. Vertex uses "
-                "OAuth2 (not a static API key): provide a service-account JSON "
-                "via GOOGLE_APPLICATION_CREDENTIALS (or VERTEX_CREDENTIALS_PATH) "
-                "in ~/.hermes/.env, or run 'gcloud auth application-default "
-                "login' for ADC. Set the GCP project/region under vertex: in "
-                "config.yaml if they aren't embedded in the credentials. "
-                "Run `hermes setup` to install Vertex support."
-            )
-        return {
-            "provider": "vertex",
-            "api_mode": "chat_completions",
-            "base_url": base_url.rstrip("/"),
-            "api_key": token,
-            "source": "vertex-oauth",
-            "requested_provider": requested_provider,
-        }
+            token, base_url = get_vertex_config()
+            if not token or not base_url:
+                raise AuthError(
+                    "Vertex AI credentials could not be resolved. Vertex uses "
+                    "OAuth2 (not a static API key): provide a service-account JSON "
+                    "via GOOGLE_APPLICATION_CREDENTIALS (or VERTEX_CREDENTIALS_PATH) "
+                    "in ~/.hermes/.env, or run 'gcloud auth application-default "
+                    "login' for ADC. Set the GCP project/region under vertex: in "
+                    "config.yaml if they aren't embedded in the credentials. "
+                    "Run `hermes setup` to install Vertex support."
+                )
+            return {
+                "provider": "vertex",
+                "api_mode": "chat_completions",
+                "base_url": base_url.rstrip("/"),
+                "api_key": token,
+                "source": "vertex-oauth",
+                "requested_provider": requested_provider,
+            }
 
     custom_runtime = _resolve_named_custom_runtime(
         requested_provider=requested_provider,
@@ -2122,13 +2132,24 @@ def resolve_runtime_provider(
             "requested_provider": requested_provider,
         }
 
-    # Google Cloud Vertex AI (AnthropicVertex SDK via ADC)
-    if provider in {"vertex", "vertex-ai", "google-vertex"}:
+    # Anthropic-on-Vertex (ADC → AnthropicVertex SDK). Keep a compatibility
+    # path for older configs that used provider=vertex with
+    # api_mode=anthropic_messages before upstream claimed provider=vertex for
+    # Gemini's OpenAI-compatible Vertex endpoint.
+    legacy_vertex_anthropic = (
+        provider in {"vertex", "vertex-ai", "google-vertex"}
+        and str(model_cfg.get("api_mode") or "").strip() == "anthropic_messages"
+    )
+    if provider == "anthropic-vertex" or legacy_vertex_anthropic:
         from agent.anthropic_adapter import build_vertex_adc_runtime_dict
 
         cfg_base_url = ""
         cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
-        if cfg_provider in {"vertex", "vertex-ai", "google-vertex"}:
+        cfg_api_mode = str(model_cfg.get("api_mode") or "").strip()
+        if cfg_provider == "anthropic-vertex" or (
+            cfg_provider in {"vertex", "vertex-ai", "google-vertex"}
+            and cfg_api_mode == "anthropic_messages"
+        ):
             cfg_base_url = str(model_cfg.get("base_url") or "").strip()
         vertex_runtime = build_vertex_adc_runtime_dict(
             requested_provider,
