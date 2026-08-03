@@ -1169,7 +1169,7 @@ class TestAuxiliaryClientVertexResolution:
         monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
         monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-proj")
         monkeypatch.setattr(
-            "hermes_cli.config.load_config",
+            "hermes_cli.config.load_config_readonly",
             lambda: {
                 "model": {
                     "provider": "anthropic",
