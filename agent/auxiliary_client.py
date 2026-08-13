@@ -6591,6 +6591,17 @@ def resolve_provider_client(
             runtime_api_key == "vertex-adc-auth"
             or runtime_api_mode == "anthropic_messages"
             or str(explicit_api_key or "").strip() == "vertex-adc-auth"
+            # The task's OWN api_mode (auxiliary.<task>.api_mode in
+            # config.yaml) must count too. hermes_cli.runtime_provider
+            # already treats provider=vertex + api_mode=anthropic_messages
+            # as Anthropic-on-Vertex for the main model and delegation;
+            # without this clause the same config silently routed auxiliary
+            # tasks to Gemini's OpenAI-compat `openapi` endpoint and every
+            # call died with "Malformed publisher model (`model`:
+            # 'claude-sonnet-5') ... expected '<publisher>/<model>'".
+            # Failure was invisible until the task actually fired: config
+            # inspection and `hermes doctor` both looked clean.
+            or str(api_mode or "").strip() == "anthropic_messages"
         )
     )
     if provider == "anthropic-vertex" or legacy_vertex_anthropic:

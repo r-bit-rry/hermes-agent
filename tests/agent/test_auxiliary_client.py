@@ -1134,6 +1134,59 @@ class TestAuxiliaryClientVertexResolution:
         assert client is None
         assert model is None
 
+    def test_vertex_with_task_api_mode_routes_to_anthropic(self, monkeypatch):
+        """provider=vertex + api_mode=anthropic_messages must use the Anthropic SDK.
+
+        hermes_cli.runtime_provider already treats this pair as
+        Anthropic-on-Vertex for the main model and delegation. The auxiliary
+        router used to ignore the task's own ``api_mode`` (only consulting the
+        inherited main-runtime one), so an ``auxiliary.<task>`` block written as
+        ``provider: vertex`` + ``api_mode: anthropic_messages`` silently fell
+        through to Gemini's OpenAI-compat ``openapi`` endpoint. Every call then
+        failed with "Malformed publisher model (`model`: 'claude-sonnet-5') ...
+        expected '<publisher>/<model>'" — invisible to config inspection and to
+        ``hermes doctor``, and only surfacing when the task actually fired.
+        """
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+
+        with patch(
+            "agent.anthropic_adapter.build_anthropic_vertex_client",
+            return_value=MagicMock(),
+        ):
+            from agent.auxiliary_client import (
+                AnthropicAuxiliaryClient,
+                resolve_provider_client,
+            )
+
+            client, model = resolve_provider_client(
+                "vertex",
+                model="claude-sonnet-5",
+                api_mode="anthropic_messages",
+            )
+
+        assert isinstance(client, AnthropicAuxiliaryClient)
+        assert client.api_key == "vertex-adc-auth"
+        assert model == "claude-sonnet-5"
+
+    def test_vertex_without_anthropic_api_mode_stays_on_gemini_path(self, monkeypatch):
+        """Control for the fix above: bare provider=vertex must NOT be hijacked.
+
+        ``vertex`` on its own is Gemini's OpenAI-compatible endpoint. Only the
+        explicit anthropic_messages signal should divert to the Anthropic SDK.
+        """
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
+        monkeypatch.setenv("VERTEX_REGION", "global")
+
+        from agent.auxiliary_client import (
+            AnthropicAuxiliaryClient,
+            resolve_provider_client,
+        )
+
+        client, _model = resolve_provider_client("vertex", model="gemini-3.6-flash")
+
+        assert not isinstance(client, AnthropicAuxiliaryClient)
+
     def test_try_vertex_default_model_uses_vertex_date_suffix(self, monkeypatch):
         monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "gcp-aux-proj")
         monkeypatch.setenv("VERTEX_REGION", "global")
